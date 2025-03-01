@@ -1,3 +1,4 @@
+// vol-dashboard/src/components/Volatility3DModel.js
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import Plot from 'react-plotly.js';
@@ -11,34 +12,72 @@ function Volatility3DModel() {
   });
   const [isLoading, setIsLoading] = useState(true);
   const [loadingError, setLoadingError] = useState(null);
+  const [marketClosed, setMarketClosed] = useState(false);
+  const symbol = 'NIFTY';
+
+  const isMarketOpen = () => {
+    const now = new Date();
+    const istOffset = 5.5 * 60 * 60 * 1000;
+    const istTime = new Date(now.getTime() + istOffset);
+    const day = istTime.getUTCDay();
+    const hours = istTime.getUTCHours();
+    const minutes = istTime.getUTCMinutes();
+    const timeInMinutes = hours * 60 + minutes;
+    return day >= 1 && day <= 5 && timeInMinutes >= 555 && timeInMinutes <= 930;
+  };
 
   const fetchVolSurface = () => {
     setIsLoading(true);
     setLoadingError(null);
-    axios.get('http://127.0.0.1:5000/volatility-surface/NIFTY/all', { timeout: 10000 })
+    axios.get(`http://127.0.0.1:5000/volatility-surface/${symbol}/all`, { timeout: 10000 })
       .then(response => {
-        console.log("3D Volatility fetch successful. Data:", response.data);
-        setVolSurfaceData({
-          strikes: response.data.strikes || [],
-          daysToExpiry: response.data.days_to_expiry || [],
-          impliedVols: response.data.implied_vols || [],
-          expiryDates: response.data.expiryDates || []
-        });
+        if (response.data.error === "Market is closed") {
+          setMarketClosed(true);
+          const cachedData = JSON.parse(localStorage.getItem('volSurfaceData') || '{}');
+          if (cachedData.strikes && cachedData.strikes.length > 0) {
+            setVolSurfaceData(cachedData);
+          }
+        } else {
+          const newData = {
+            strikes: response.data.strikes || [],
+            daysToExpiry: response.data.days_to_expiry || [],
+            impliedVols: response.data.implied_vols || [],
+            expiryDates: response.data.expiryDates || []
+          };
+          setVolSurfaceData(newData);
+          localStorage.setItem('volSurfaceData', JSON.stringify(newData));
+          setMarketClosed(false);
+        }
         setIsLoading(false);
       })
       .catch(error => {
-        console.error("3D Volatility fetch failed. Error:", error.message);
         setLoadingError(error.message);
         setIsLoading(false);
+        const cachedData = JSON.parse(localStorage.getItem('volSurfaceData') || '{}');
+        if (cachedData.strikes && cachedData.strikes.length > 0) {
+          setVolSurfaceData(cachedData);
+          setMarketClosed(true);
+        }
       });
   };
 
   useEffect(() => {
-    fetchVolSurface();
+    const cachedData = JSON.parse(localStorage.getItem('volSurfaceData') || '{}');
+    if (cachedData.strikes && cachedData.strikes.length > 0) {
+      setVolSurfaceData(cachedData);
+      setMarketClosed(!isMarketOpen());
+      setIsLoading(false);
+    } else {
+      fetchVolSurface();
+    }
   }, []);
 
   const handleRefresh = () => {
-    fetchVolSurface();
+    if (isMarketOpen()) {
+      fetchVolSurface();
+    } else {
+      setMarketClosed(true);
+    }
   };
 
   const strikesUnique = [...new Set(volSurfaceData.strikes)];
@@ -63,8 +102,8 @@ function Volatility3DModel() {
 
   const layout = {
     title: {
-      text: '3D Volatility Surface - NIFTY (4 Closest Expiries)',
-      font: { color: 'white', size: 16 } // Smaller title
+      text: `3D Volatility Surface - ${symbol} (4 Closest Expiries)${marketClosed ? ' [Market Closed - Last Data]' : ''}`,
+      font: { color: 'white', size: 16 }
     },
     scene: {
       xaxis: { title: 'Strike Price', titlefont: { color: 'white', size: 14 }, tickfont: { color: 'white', size: 12 } },
@@ -73,9 +112,9 @@ function Volatility3DModel() {
     },
     paper_bgcolor: '#1a1a1a',
     plot_bgcolor: '#1a1a1a',
-    width: 900, // Slightly smaller plot
-    height: 500, // Reduced height
-    margin: { l: 40, r: 40, b: 40, t: 40 } // Reduced margins
+    width: 900,
+    height: 500,
+    margin: { l: 40, r: 40, b: 40, t: 40 }
   };
 
   return (
@@ -83,27 +122,20 @@ function Volatility3DModel() {
       <h1 style={{ fontSize: '24px' }}>3D Volatility Model</h1>
       {isLoading ? (
         <p style={{ fontSize: '14px' }}>Loading 3D volatility surface...</p>
-      ) : loadingError ? (
-        <p style={{ color: 'red', fontSize: '14px' }}>Error: {loadingError}</p>
+      ) : loadingError && volSurfaceData.strikes.length === 0 ? (
+        <p style={{ color: 'red', fontSize: '14px' }}>Error: {loadingError}. No cached data available.</p>
       ) : (
         <>
-          <button 
-            onClick={handleRefresh} 
-            style={{ padding: '4px 8px', marginBottom: '15px', fontSize: '14px', backgroundColor: '#333', color: 'white', border: '1px solid white' }}
-          >
+          <button onClick={handleRefresh} style={{ padding: '4px 8px', marginBottom: '15px', fontSize: '14px', backgroundColor: '#333', color: 'white', border: '1px solid white' }}>
             Refresh
           </button>
           <div style={{ marginBottom: '15px' }}>
             <p style={{ fontSize: '14px' }}>Expiries Plotted: {volSurfaceData.expiryDates.join(', ')}</p>
           </div>
           {plotData.length > 0 && volSurfaceData.impliedVols.some(iv => iv > 0) ? (
-            <Plot
-              data={plotData}
-              layout={layout}
-              config={{ responsive: true }}
-            />
+            <Plot data={plotData} layout={layout} config={{ responsive: true }} />
           ) : (
-            <p style={{ fontSize: '14px' }}>No valid volatility data to plot. Check console for details.</p>
+            <p style={{ fontSize: '14px' }}>No valid volatility data to plot.</p>
           )}
         </>
       )}

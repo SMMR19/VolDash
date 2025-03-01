@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 
-function OptionPricing() {  // Changed from OptionPricingTool
+function OptionPricing() {
   const [pricingData, setPricingData] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadingError, setLoadingError] = useState(null);
@@ -129,29 +129,34 @@ function OptionPricing() {  // Changed from OptionPricingTool
     axios.get(`http://127.0.0.1:5000/option-price/${symbol}/${selectedExpiry}/${selectedStrike}`, { timeout: 5000 })
       .then(response => {
         const data = response.data;
-        const S = useManualPrice && manualUnderlyingPrice ? parseFloat(manualUnderlyingPrice) : underlyingPrice;
-        let pricingResult;
-        if (model === 'BSM') {
-          const cePrice = bsm_price(S, data.strike, data.time_to_expiry, data.risk_free_rate, data.ce_iv / 100, 'call');
-          const pePrice = bsm_price(S, data.strike, data.time_to_expiry, data.risk_free_rate, data.pe_iv / 100, 'put');
-          pricingResult = { ...data, ce_price: cePrice.toFixed(2), pe_price: pePrice.toFixed(2), underlying_value: S };
-        } else if (model === 'Heston') {
-          const v0 = (Math.max(data.ce_iv, data.pe_iv) / 100) ** 2;
-          const { kappa, theta, sigma, rho, steps, sims } = hestonParams;
-          const hestonPrices = heston_price(S, data.strike, data.time_to_expiry, data.risk_free_rate, v0, kappa, theta, sigma, rho, steps, sims);
-          pricingResult = { ...data, ce_price: hestonPrices.ce_price.toFixed(2), pe_price: hestonPrices.pe_price.toFixed(2), underlying_value: S, kappa, theta, sigma, rho, steps, sims };
-        } else if (model === 'VarianceGamma') {
-          const { sigma, nu, theta } = vgParams;
-          const cePrice = vg_price(S, data.strike, data.time_to_expiry, data.risk_free_rate, sigma, nu, theta, 'call');
-          const pePrice = vg_price(S, data.strike, data.time_to_expiry, data.risk_free_rate, sigma, nu, theta, 'put');
-          pricingResult = { ...data, ce_price: cePrice.toFixed(2), pe_price: pePrice.toFixed(2), underlying_value: S, sigma, nu, theta };
+        if (data.error) {
+          setPricingData(null); // Reset if market closed with no data
+        } else {
+          const S = useManualPrice && manualUnderlyingPrice ? parseFloat(manualUnderlyingPrice) : underlyingPrice;
+          let pricingResult;
+          if (model === 'BSM') {
+            const cePrice = bsm_price(S, data.strike, data.time_to_expiry, data.risk_free_rate, data.ce_iv / 100, 'call');
+            const pePrice = bsm_price(S, data.strike, data.time_to_expiry, data.risk_free_rate, data.pe_iv / 100, 'put');
+            pricingResult = { ...data, ce_price: cePrice, pe_price: pePrice, underlying_value: S };
+          } else if (model === 'Heston') {
+            const v0 = (Math.max(data.ce_iv, data.pe_iv) / 100) ** 2;
+            const { kappa, theta, sigma, rho, steps, sims } = hestonParams;
+            const hestonPrices = heston_price(S, data.strike, data.time_to_expiry, data.risk_free_rate, v0, kappa, theta, sigma, rho, steps, sims);
+            pricingResult = { ...data, ce_price: hestonPrices.ce_price, pe_price: hestonPrices.pe_price, underlying_value: S, kappa, theta, sigma, rho, steps, sims };
+          } else if (model === 'VarianceGamma') {
+            const { sigma, nu, theta } = vgParams;
+            const cePrice = vg_price(S, data.strike, data.time_to_expiry, data.risk_free_rate, sigma, nu, theta, 'call');
+            const pePrice = vg_price(S, data.strike, data.time_to_expiry, data.risk_free_rate, sigma, nu, theta, 'put');
+            pricingResult = { ...data, ce_price: cePrice, pe_price: pePrice, underlying_value: S, sigma, nu, theta };
+          }
+          setPricingData(pricingResult);
         }
-        setPricingData(pricingResult);
         setMarketClosed(!isMarketOpen());
         setIsLoading(false);
       })
       .catch(error => {
         setLoadingError(error.message);
+        setPricingData(null);
         setIsLoading(false);
       });
   };
@@ -173,7 +178,7 @@ function OptionPricing() {  // Changed from OptionPricingTool
 
   return (
     <div style={{ padding: '15px', maxWidth: '1400px', margin: '0 auto', backgroundColor: '#1a1a1a', color: 'white' }}>
-      <h1 style={{ fontSize: '24px' }}>Option Pricing</h1> {/* Changed title */}
+      <h1 style={{ fontSize: '24px' }}>Option Pricing</h1>
       {isLoading ? (
         <p style={{ fontSize: '14px' }}>Loading data...</p>
       ) : loadingError ? (
@@ -238,41 +243,43 @@ function OptionPricing() {  // Changed from OptionPricingTool
               <input type="number" value={vgParams.theta} onChange={handleVgParamChange('theta')} step="0.01" style={{ width: '50px', marginRight: '10px', backgroundColor: '#333', color: 'white', border: '1px solid white', fontSize: '14px' }} />
             </div>
           )}
-          {pricingData && (
+          {pricingData ? (
             <div>
               <h2 style={{ fontSize: '20px' }}>Results ({model})${marketClosed ? ' [Market Closed - Last Data]' : ''}</h2>
-              <p style={{ fontSize: '14px' }}>Underlying Price: {pricingData.underlying_value}</p>
-              <p style={{ fontSize: '14px' }}>Strike Price: {pricingData.strike}</p>
-              <p style={{ fontSize: '14px' }}>Time to Expiry: {pricingData.time_to_expiry.toFixed(4)} years</p>
-              <p style={{ fontSize: '14px' }}>Risk-Free Rate: {(pricingData.risk_free_rate * 100).toFixed(2)}%</p>
+              <p style={{ fontSize: '14px' }}>Underlying Price: {pricingData.underlying_value || 'N/A'}</p>
+              <p style={{ fontSize: '14px' }}>Strike Price: {pricingData.strike || 'N/A'}</p>
+              <p style={{ fontSize: '14px' }}>Time to Expiry: {pricingData.time_to_expiry ? pricingData.time_to_expiry.toFixed(4) : 'N/A'} years</p>
+              <p style={{ fontSize: '14px' }}>Risk-Free Rate: {pricingData.risk_free_rate ? (pricingData.risk_free_rate * 100).toFixed(2) : 'N/A'}%</p>
               {model === 'Heston' && (
                 <>
                   <p style={{ fontSize: '14px' }}>Heston Parameters:</p>
-                  <p style={{ fontSize: '14px' }}>- Kappa: {pricingData.kappa}</p>
-                  <p style={{ fontSize: '14px' }}>- Theta: {pricingData.theta.toFixed(4)}</p>
-                  <p style={{ fontSize: '14px' }}>- Sigma: {pricingData.sigma}</p>
-                  <p style={{ fontSize: '14px' }}>- Rho: {pricingData.rho}</p>
-                  <p style={{ fontSize: '14px' }}>- Steps: {pricingData.steps}</p>
-                  <p style={{ fontSize: '14px' }}>- Simulations: {pricingData.sims}</p>
+                  <p style={{ fontSize: '14px' }}>- Kappa: {pricingData.kappa || 'N/A'}</p>
+                  <p style={{ fontSize: '14px' }}>- Theta: {pricingData.theta ? pricingData.theta.toFixed(4) : 'N/A'}</p>
+                  <p style={{ fontSize: '14px' }}>- Sigma: {pricingData.sigma || 'N/A'}</p>
+                  <p style={{ fontSize: '14px' }}>- Rho: {pricingData.rho || 'N/A'}</p>
+                  <p style={{ fontSize: '14px' }}>- Steps: {pricingData.steps || 'N/A'}</p>
+                  <p style={{ fontSize: '14px' }}>- Simulations: {pricingData.sims || 'N/A'}</p>
                 </>
               )}
               {model === 'VarianceGamma' && (
                 <>
                   <p style={{ fontSize: '14px' }}>Variance Gamma Parameters:</p>
-                  <p style={{ fontSize: '14px' }}>- Sigma: {pricingData.sigma}</p>
-                  <p style={{ fontSize: '14px' }}>- Nu: {pricingData.nu}</p>
-                  <p style={{ fontSize: '14px' }}>- Theta: {pricingData.theta}</p>
+                  <p style={{ fontSize: '14px' }}>- Sigma: {pricingData.sigma || 'N/A'}</p>
+                  <p style={{ fontSize: '14px' }}>- Nu: {pricingData.nu || 'N/A'}</p>
+                  <p style={{ fontSize: '14px' }}>- Theta: {pricingData.theta || 'N/A'}</p>
                 </>
               )}
               <h3 style={{ fontSize: '18px' }}>Call Option (CE)</h3>
-              <p style={{ fontSize: '14px' }}>Implied Volatility: {pricingData.ce_iv.toFixed(2)}%</p>
-              <p style={{ fontSize: '14px' }}>Theoretical Price: ₹{pricingData.ce_price}</p>
-              <p style={{ fontSize: '14px' }}>Market Price: ₹{pricingData.ce_market_price}</p>
+              <p style={{ fontSize: '14px' }}>Implied Volatility: {pricingData.ce_iv ? pricingData.ce_iv.toFixed(2) : 'N/A'}%</p>
+              <p style={{ fontSize: '14px' }}>Theoretical Price: ₹{pricingData.ce_price ? pricingData.ce_price.toFixed(2) : 'N/A'}</p>
+              <p style={{ fontSize: '14px' }}>Market Price: ₹{pricingData.ce_market_price || 'N/A'}</p>
               <h3 style={{ fontSize: '18px' }}>Put Option (PE)</h3>
-              <p style={{ fontSize: '14px' }}>Implied Volatility: {pricingData.pe_iv.toFixed(2)}%</p>
-              <p style={{ fontSize: '14px' }}>Theoretical Price: ₹{pricingData.pe_price}</p>
-              <p style={{ fontSize: '14px' }}>Market Price: ₹{pricingData.pe_market_price}</p>
+              <p style={{ fontSize: '14px' }}>Implied Volatility: {pricingData.pe_iv ? pricingData.pe_iv.toFixed(2) : 'N/A'}%</p>
+              <p style={{ fontSize: '14px' }}>Theoretical Price: ₹{pricingData.pe_price ? pricingData.pe_price.toFixed(2) : 'N/A'}</p>
+              <p style={{ fontSize: '14px' }}>Market Price: ₹{pricingData.pe_market_price || 'N/A'}</p>
             </div>
+          ) : (
+            <p style={{ fontSize: '14px' }}>No pricing data available yet. Select options and calculate.</p>
           )}
         </>
       )}
@@ -280,4 +287,4 @@ function OptionPricing() {  // Changed from OptionPricingTool
   );
 }
 
-export default OptionPricing;  // Changed export
+export default OptionPricing;
